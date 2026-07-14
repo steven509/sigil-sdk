@@ -406,8 +406,9 @@ export class SigilMastraExporter implements MastraObservabilityExporterLike {
       startedAt,
     };
 
+    const finalSeed = this.applyGenerationCustomizer(seed, span);
     const recorder: GenerationRecorder = this.withMastraParentContext(span, () =>
-      streaming ? this.client.startStreamingGeneration(seed) : this.client.startGeneration(seed),
+      streaming ? this.client.startStreamingGeneration(finalSeed) : this.client.startGeneration(finalSeed),
     );
 
     const completionStartTime = coerceDate(attributes.completionStartTime);
@@ -468,8 +469,8 @@ export class SigilMastraExporter implements MastraObservabilityExporterLike {
     const metadata = this.buildMetadata(state, span, 'llm');
     metadata[metadataKeyMastraUsageRollup] = true;
 
-    const recorder = this.withMastraParentContext(span, () =>
-      this.client.startGeneration({
+    const seed = this.applyGenerationCustomizer(
+      {
         id: generationId,
         conversationId: this.resolveConversationId(state, span),
         userId: this.resolveUserId(state, span),
@@ -480,8 +481,10 @@ export class SigilMastraExporter implements MastraObservabilityExporterLike {
         tags: this.buildTags(),
         metadata,
         startedAt: coerceDate(span.startTime) ?? new Date(),
-      }),
+      },
+      span,
     );
+    const recorder = this.withMastraParentContext(span, () => this.client.startGeneration(seed));
     recorder.setResult({ usage, completedAt: coerceDate(span.endTime) ?? new Date() });
     recorder.end();
     const recorderError = recorder.getError();
@@ -490,6 +493,20 @@ export class SigilMastraExporter implements MastraObservabilityExporterLike {
       return;
     }
     state.lastGenerationId = generationId;
+  }
+
+  /** Applies the user's `customizeGeneration` hook; never throws. */
+  private applyGenerationCustomizer(seed: GenerationStart, span: MastraExportedSpan): GenerationStart {
+    const customize = this.options.customizeGeneration;
+    if (customize === undefined) {
+      return seed;
+    }
+    try {
+      return customize(seed, span) ?? seed;
+    } catch (error) {
+      this.logWarn('sigil mastra exporter customizeGeneration hook failed; using the unmodified seed', error);
+      return seed;
+    }
   }
 
   /**

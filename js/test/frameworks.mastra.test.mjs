@@ -798,6 +798,51 @@ test('mastra exporter unwraps AI SDK tool-result envelopes and records toolCallI
   assert.equal(message.parts[1].toolResult.isError, true);
 });
 
+test('mastra exporter applies the customizeGeneration hook and survives hook failures', async () => {
+  const { client, exporter } = newClient();
+  const mastraExporter = createSigilMastraExporter(client, {
+    agentName: 'base-agent',
+    customizeGeneration: (seed, span) => {
+      const requestContext = span.requestContext ?? {};
+      if (requestContext.promptId === undefined) {
+        throw new Error('boom'); // hook errors must not drop the generation
+      }
+      return {
+        ...seed,
+        agentName: `${seed.agentName}:${requestContext.promptId}`,
+        userId: requestContext.userId,
+        operationName: 'custom-op',
+        effectiveVersion: `sha256:${'a'.repeat(64)}`,
+      };
+    },
+  });
+
+  await emit(
+    mastraExporter,
+    'span_ended',
+    endedGenerationSpan({
+      isRootSpan: true,
+      parentSpanId: undefined,
+      requestContext: { promptId: 'faq', userId: 'user-1' },
+    }),
+  );
+  await emit(
+    mastraExporter,
+    'span_ended',
+    endedGenerationSpan({ id: 'bbbbbbbbbbbbbbb3', isRootSpan: true, parentSpanId: undefined }),
+  );
+  await client.flush();
+  await client.shutdown();
+
+  assert.equal(exporter.generations.length, 2);
+  const [customized, fallback] = exporter.generations;
+  assert.equal(customized.agentName, 'base-agent:faq');
+  assert.equal(customized.userId, 'user-1');
+  assert.equal(customized.operationName, 'custom-op');
+  assert.equal(customized.effectiveVersion, `sha256:${'a'.repeat(64)}`);
+  assert.equal(fallback.agentName, 'base-agent', 'throwing hook falls back to the unmodified seed');
+});
+
 test('mastra exporter uses serviceName from init as agent fallback', async () => {
   const { client, exporter } = newClient();
   const mastraExporter = new SigilMastraExporter(client);

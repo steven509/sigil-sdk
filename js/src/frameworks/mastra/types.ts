@@ -1,3 +1,5 @@
+import type { GenerationStart } from '../../types.js';
+
 /**
  * Structural (duck-typed) mirrors of the Mastra observability contracts from
  * `@mastra/core/observability` (core >= 1.16). Declaring them locally keeps
@@ -145,6 +147,15 @@ export interface SigilMastraExporterOptions {
    * `sessionId`/`conversationId` → deterministic per-trace fallback).
    */
   resolveConversationId?: MastraConversationIdResolver;
+  /**
+   * Final per-generation customization. Receives the seed the exporter built
+   * and the originating Mastra span (use `span.requestContext`/`metadata`
+   * for app-specific routing) and returns the seed to record — override
+   * identity fields like `agentName`, `userId`, `operationName`, or
+   * `effectiveVersion` here. Runs for regular and usage-rollup generations;
+   * a thrown error is logged and the unmodified seed is used.
+   */
+  customizeGeneration?: (seed: GenerationStart, span: MastraExportedSpan) => GenerationStart | undefined;
   /** Export Mastra `workflow_step` spans as Sigil workflow steps. Defaults to true. */
   exportWorkflowSteps?: boolean;
   /**

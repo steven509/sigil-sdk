@@ -105,6 +105,23 @@ Metadata includes:
 
 Workflow steps carry `sigil.framework.mastra.span_type`, `.status`, `.workflow`, and the same error classification keys.
 
+## Per-generation customization
+
+`customizeGeneration(seed, span)` runs last before a generation is recorded — override identity fields per span (the Mastra `requestContext` and `metadata` are available on the span):
+
+```ts
+createSigilMastraExporter(sigil, {
+  agentName: 'my-agent',
+  customizeGeneration: (seed, span) => ({
+    ...seed,
+    agentName: `${seed.agentName}:${span.requestContext?.promptId ?? 'default'}`,
+    userId: span.requestContext?.userId,
+  }),
+});
+```
+
+Hook errors are logged and the unmodified seed is used.
+
 ## Privacy Controls
 
 Disable model/tool payload capture:
