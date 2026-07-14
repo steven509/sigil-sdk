@@ -844,7 +844,11 @@ export class SigilMastraExporter implements MastraObservabilityExporterLike {
    * stamping the Mastra trace/span ids onto the exported generation.
    */
   private withMastraParentContext<T>(span: MastraExportedSpan, fn: () => T): T {
-    if (!isValidOtelTraceId(span.traceId) || !isValidOtelSpanId(span.id)) {
+    if (
+      (this.options.joinMastraTrace ?? true) === false ||
+      !isValidOtelTraceId(span.traceId) ||
+      !isValidOtelSpanId(span.id)
+    ) {
       return fn();
     }
     const parentContext = otelTrace.setSpanContext(ROOT_CONTEXT, {

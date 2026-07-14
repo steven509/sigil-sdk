@@ -159,6 +159,15 @@ export interface SigilMastraExporterOptions {
   /** Export Mastra `workflow_step` spans as Sigil workflow steps. Defaults to true. */
   exportWorkflowSteps?: boolean;
   /**
+   * Parent Sigil-created OTel spans on the originating Mastra span context so
+   * both land in one trace. Defaults to true — correct when the Mastra spans
+   * are also exported over OTLP (e.g. via `@mastra/otel-exporter`). Set false
+   * when they are not: the parented spans would otherwise reference ancestors
+   * that never reach the trace store, leaving every trace headless (which
+   * breaks trace-derived views such as per-generation latency).
+   */
+  joinMastraTrace?: boolean;
+  /**
    * Shut the Sigil client down when Mastra shuts the exporter down.
    * Defaults to true when the exporter constructed its own client and false
    * when a client was passed in.

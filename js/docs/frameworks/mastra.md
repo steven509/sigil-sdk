@@ -82,6 +82,12 @@ configs: {
 
 Without an OTLP channel the generation records still carry the Mastra `trace_id`, so Grafana joins generations, workflow steps, and any Sigil-emitted spans consistently.
 
+If you export the Sigil client's spans over OTLP but do **not** export Mastra's spans (no `@mastra/otel-exporter`/bridge), set `joinMastraTrace: false` — otherwise every Sigil span is parented on a Mastra span that never reaches the trace store, leaving headless traces that break trace-derived views such as per-generation latency:
+
+```ts
+createSigilMastraExporter(sigil, { joinMastraTrace: false });
+```
+
 ## Metadata
 
 Tags:

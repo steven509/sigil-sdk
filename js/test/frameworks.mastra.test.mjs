@@ -480,6 +480,25 @@ test('mastra generation spans join the mastra trace with span lineage', async ()
   assert.equal(toolSpanOut.parentSpanContext?.spanId, TOOL_SPAN_ID);
 });
 
+test('mastra exporter self-roots spans when joinMastraTrace is disabled', async () => {
+  const spanExporter = new InMemorySpanExporter();
+  const tracerProvider = new BasicTracerProvider({
+    spanProcessors: [new SimpleSpanProcessor(spanExporter)],
+  });
+  const { client } = newClient({ tracer: tracerProvider.getTracer('sigil-mastra-test') });
+  const mastraExporter = createSigilMastraExporter(client, { joinMastraTrace: false });
+
+  await emitAgentTrace(mastraExporter);
+  await client.shutdown();
+
+  const spans = spanExporter.getFinishedSpans();
+  await tracerProvider.shutdown();
+  const generationSpanOut = spans.find((span) => span.name === 'streamText gpt-5-mini');
+  assert.ok(generationSpanOut, 'generation span exported');
+  assert.notEqual(generationSpanOut.spanContext().traceId, TRACE_ID, 'span starts its own trace');
+  assert.equal(generationSpanOut.parentSpanContext, undefined, 'span has no phantom parent');
+});
+
 test('mastra exporter honors capture flags', async () => {
   const { client, exporter } = newClient();
   const mastraExporter = createSigilMastraExporter(client, { captureInputs: false, captureOutputs: false });
