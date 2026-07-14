@@ -336,6 +336,10 @@ export function mapMastraOutputMessages(output: unknown): Message[] {
   }
 
   const parts: MessagePart[] = [];
+  const reasoningText = record.reasoningText;
+  if (typeof reasoningText === 'string' && reasoningText.trim().length > 0) {
+    parts.push({ type: 'thinking', thinking: reasoningText });
+  }
   const text = record.text;
   if (typeof text === 'string' && text.length > 0) {
     parts.push({ type: 'text', text });

@@ -490,6 +490,80 @@ test('mastra generation spans join the mastra trace with span lineage', async ()
   assert.equal(toolSpanOut.parentSpanContext?.spanId, TOOL_SPAN_ID);
 });
 
+test('mastra exporter reconstructs the interleaved output from step spans', async () => {
+  const { client, exporter } = newClient();
+  const mastraExporter = createSigilMastraExporter(client);
+
+  const step0 = 'ddddddddddddddd5';
+  const step1 = 'ddddddddddddddd6';
+  const mkStep = (id, stepIndex, output) => ({
+    id,
+    traceId: TRACE_ID,
+    name: `step: ${stepIndex}`,
+    type: 'model_step',
+    parentSpanId: GEN_SPAN_ID,
+    startTime: new Date(),
+    endTime: new Date(),
+    attributes: { stepIndex },
+    output,
+  });
+  const mkReasoning = (id, parent, text, seq) => ({
+    id,
+    traceId: TRACE_ID,
+    name: "chunk: 'reasoning'",
+    type: 'model_chunk',
+    parentSpanId: parent,
+    startTime: new Date(),
+    endTime: new Date(),
+    attributes: { chunkType: 'reasoning', sequenceNumber: seq },
+    output: { text },
+  });
+
+  await emit(mastraExporter, 'span_started', agentRunSpan());
+  await emit(mastraExporter, 'span_started', generationSpan());
+  await emit(mastraExporter, 'span_started', mkStep(step0, 0));
+  await emit(mastraExporter, 'span_ended', mkReasoning('ddddddddddddddd7', step0, 'I should use the calculator.', 0));
+  await emit(mastraExporter, 'span_ended', toolSpan({ parentSpanId: step0 }));
+  await emit(
+    mastraExporter,
+    'span_ended',
+    mkStep(step0, 0, {
+      text: 'Let me check.',
+      toolCalls: [{ toolCallId: 'call-9', toolName: 'calculator', args: { a: 5, b: 3 } }],
+    }),
+  );
+  await emit(mastraExporter, 'span_started', mkStep(step1, 1));
+  await emit(mastraExporter, 'span_ended', mkReasoning('ddddddddddddddd8', step1, 'Now I can answer.', 0));
+  await emit(mastraExporter, 'span_ended', mkStep(step1, 1, { text: 'The answer is 8', toolCalls: [] }));
+  await emit(mastraExporter, 'span_ended', endedGenerationSpan({ output: { text: 'Let me check.The answer is 8' } }));
+  await client.flush();
+  await client.shutdown();
+
+  const output = exporter.generations[0].output;
+  assert.equal(output.length, 3, 'no duplicated aggregated text');
+
+  assert.equal(output[0].role, 'assistant');
+  assert.deepEqual(
+    output[0].parts.map((part) => part.type),
+    ['thinking', 'text', 'tool_call'],
+  );
+  assert.equal(output[0].parts[0].thinking, 'I should use the calculator.');
+  assert.equal(output[0].parts[1].text, 'Let me check.');
+  assert.equal(output[0].parts[2].toolCall.id, 'call-9', 'real toolCallId from the step record');
+  assert.equal(output[0].parts[2].toolCall.inputJSON, '{"a":5,"b":3}');
+
+  assert.equal(output[1].role, 'tool');
+  assert.equal(output[1].parts[0].toolResult.toolCallId, 'call-9', 'execution paired with the model call');
+  assert.equal(output[1].parts[0].toolResult.contentJSON, '{"result":8}');
+
+  assert.equal(output[2].role, 'assistant');
+  assert.deepEqual(
+    output[2].parts.map((part) => part.type),
+    ['thinking', 'text'],
+  );
+  assert.equal(output[2].parts[1].text, 'The answer is 8');
+});
+
 test('mastra exporter does not embed tool messages when disabled or already native', async () => {
   // Disabled via option.
   {
