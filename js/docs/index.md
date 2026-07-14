@@ -21,3 +21,4 @@ This directory contains public SDK usage docs for the TypeScript/JavaScript pack
 - `frameworks/google-adk.md`
 - `frameworks/vercel-ai-sdk.md`
 - `frameworks/strands.md`
+- `frameworks/mastra.md`

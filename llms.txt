@@ -265,7 +265,7 @@ Provider wrappers (use these before hand-instrumenting an SDK call):
 Framework adapters:
 
 - Python: `python-frameworks/{langchain,langgraph,openai-agents,llamaindex,google-adk,strands,claude-agent-sdk,litellm,pydantic-ai}`; each is its own pip package (e.g. `sigil-sdk-langgraph`).
-- JS/TS: subpath exports like `@grafana/sigil-sdk-js/langgraph`, `@grafana/sigil-sdk-js/vercel-ai-sdk`; single npm package, multiple entry points.
+- JS/TS: subpath exports like `@grafana/sigil-sdk-js/langgraph`, `@grafana/sigil-sdk-js/vercel-ai-sdk`, `@grafana/sigil-sdk-js/mastra`; single npm package, multiple entry points. The Mastra entry point is an observability exporter (registered in the Mastra `observability` config), not a callback handler.
 - Go: `go-frameworks/google-adk`.
 - Java: `java/frameworks/google-adk`.
 

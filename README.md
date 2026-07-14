@@ -96,7 +96,7 @@ rec.SetResult(sigil.Generation{
 | Language | Frameworks | Where |
 |----------|------------|-------|
 | Python | LangChain, LangGraph, OpenAI Agents, LlamaIndex, Google ADK, Strands Agents, Claude Agent SDK, LiteLLM, Pydantic AI | [`python-frameworks/`](python-frameworks/) |
-| TypeScript/JavaScript | LangChain, LangGraph, OpenAI Agents, LlamaIndex, Google ADK, Strands, Vercel AI SDK | Subpath exports of `@grafana/sigil-sdk-js`. See [`js/README.md`](js/README.md). |
+| TypeScript/JavaScript | LangChain, LangGraph, OpenAI Agents, LlamaIndex, Google ADK, Strands, Vercel AI SDK, Mastra | Subpath exports of `@grafana/sigil-sdk-js`. See [`js/README.md`](js/README.md). |
 | Go | Google ADK | [`go-frameworks/`](go-frameworks/) |
 | Java | Google ADK | [`java/frameworks/`](java/frameworks/) |
 
