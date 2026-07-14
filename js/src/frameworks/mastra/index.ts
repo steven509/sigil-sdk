@@ -1,7 +1,6 @@
 import { context as otelContext, trace as otelTrace, ROOT_CONTEXT, TraceFlags, type Tracer } from '@opentelemetry/api';
 import { SigilClient } from '../../client.js';
 import type { GenerationRecorder, GenerationStart, WorkflowStep } from '../../types.js';
-import { newLocalID } from '../../utils.js';
 import {
   asFiniteNumber,
   asRecord,
@@ -367,7 +366,10 @@ export class SigilMastraExporter implements MastraObservabilityExporterLike {
     const { systemPrompt, messages } = splitSystemPrompt(captureInputs ? mapMastraInputMessages(span.input) : []);
     const agentSpan = this.findAncestor(state, span, MASTRA_SPAN_TYPES.agentRun);
     const inferenceAttributes = this.findInferenceAttributes(state, span);
-    const generationId = newLocalID('gen');
+    // Deterministic id: the Mastra span id doubles as the generation id, so
+    // re-exported spans are idempotent server-side and applications can
+    // reference a generation from anywhere the span id is known.
+    const generationId = span.id;
 
     const metadata = this.buildMetadata(state, span, 'llm');
     if (rawProvider.length > 0 && rawProvider !== provider) {
@@ -465,7 +467,7 @@ export class SigilMastraExporter implements MastraObservabilityExporterLike {
     }
     const agentSpan =
       span.type === MASTRA_SPAN_TYPES.agentRun ? span : this.findAncestor(state, span, MASTRA_SPAN_TYPES.agentRun);
-    const generationId = newLocalID('gen');
+    const generationId = span.id;
     const metadata = this.buildMetadata(state, span, 'llm');
     metadata[metadataKeyMastraUsageRollup] = true;
 

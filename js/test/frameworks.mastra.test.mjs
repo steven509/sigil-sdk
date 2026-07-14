@@ -367,6 +367,7 @@ test('mastra exporter chains parentGenerationIds within a trace', async () => {
   await client.shutdown();
 
   assert.equal(exporter.generations.length, 2);
+  assert.equal(exporter.generations[0].id, GEN_SPAN_ID, 'generation id is the Mastra span id');
   assert.equal(exporter.generations[0].parentGenerationIds, undefined);
   assert.deepEqual(exporter.generations[1].parentGenerationIds, [exporter.generations[0].id]);
 });

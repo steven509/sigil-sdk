@@ -49,7 +49,7 @@ exporters: [createSigilMastraExporter({ agentVersion: '1.0.0' })],
 | `workflow_step` | Workflow step with `linkedGenerationIds` and sequential `parentStepIds` |
 | `agent_run` | Context source: agent name/version, conversation id, system instructions, available tools |
 
-Successive generations in one trace are chained through `parentGenerationIds` for the Dependencies view. Workflow steps form a true DAG: steps inside `.parallel()`/`.branch()` blocks share the preceding step as parent, and the step after the block fans in from all branches.
+Generation ids are the originating Mastra span ids, so re-exported spans are idempotent and applications can reference a generation wherever the span id is known. Successive generations in one trace are chained through `parentGenerationIds` for the Dependencies view; use `customizeGeneration` to override the linking scheme (e.g. point a turn's generations at their shared `agent_run` span via `span.parentSpanId`). Workflow steps form a true DAG: steps inside `.parallel()`/`.branch()` blocks share the preceding step as parent, and the step after the block fans in from all branches.
 
 When Mastra hides model spans (`TracingPolicy` internal spans or `excludeSpanTypes`), their token usage still reaches Sigil: the rollup Mastra places on the exported ancestor (`internalUsage`) is exported as a usage-only generation (marked `sigil.framework.mastra.usage_rollup`), so cost dashboards stay correct. Mastra's `hideInput`/`hideOutput` tracing options are honored — hidden inputs are not reconstructed from span attributes such as agent instructions.
 
