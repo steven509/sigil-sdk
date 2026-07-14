@@ -45,7 +45,7 @@ exporters: [createSigilMastraExporter({ agentVersion: '1.0.0' })],
 | Mastra span | Sigil record |
 |-------------|--------------|
 | `model_generation` | Generation (input/output messages, usage incl. cache + reasoning tokens, stop reason, response id/model, TTFT) + `generateText`/`streamText` OTel span + `gen_ai.client.*` metrics |
-| `tool_call`, `mcp_tool_call`, `client_tool_call` | `execute_tool` OTel span (arguments/results follow the client content-capture mode) |
+| `tool_call`, `mcp_tool_call`, `client_tool_call` | `execute_tool` OTel span (arguments/results follow the client content-capture mode) + embedded `tool_call`/`tool_result` message parts in the owning generation's output (`embedToolMessages: false` to disable; skipped when the framework output already carries tool parts) |
 | `workflow_step` | Workflow step with `linkedGenerationIds` and sequential `parentStepIds` |
 | `agent_run` | Context source: agent name/version, conversation id, system instructions, available tools |
 

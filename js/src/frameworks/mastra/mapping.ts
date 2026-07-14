@@ -164,7 +164,7 @@ export function mapMastraUsage(rawUsage: unknown): TokenUsage | undefined {
   return mapped;
 }
 
-function safeJSONStringify(value: unknown): string | undefined {
+export function safeJSONStringify(value: unknown): string | undefined {
   try {
     const encoded = JSON.stringify(value);
     return typeof encoded === 'string' ? encoded : undefined;

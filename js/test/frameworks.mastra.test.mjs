@@ -196,9 +196,19 @@ test('mastra exporter maps a model generation with agent context', async () => {
 
   assert.equal(generation.input.length, 1);
   assert.equal(generation.input[0].role, 'user');
-  assert.equal(generation.output.length, 1);
+  // Tool round-trips are embedded ahead of the final text so the tool shows
+  // inside the generation.
+  assert.equal(generation.output.length, 3);
   assert.equal(generation.output[0].role, 'assistant');
-  assert.equal(generation.output[0].content, 'The answer is 8');
+  assert.equal(generation.output[0].parts[0].type, 'tool_call');
+  assert.equal(generation.output[0].parts[0].toolCall.name, 'calculator');
+  assert.equal(generation.output[0].parts[0].toolCall.inputJSON, '{"operation":"add","a":5,"b":3}');
+  assert.equal(generation.output[1].role, 'tool');
+  assert.equal(generation.output[1].parts[0].type, 'tool_result');
+  assert.equal(generation.output[1].parts[0].toolResult.contentJSON, '{"result":8}');
+  assert.equal(generation.output[1].parts[0].toolResult.toolCallId, generation.output[0].parts[0].toolCall.id);
+  assert.equal(generation.output[2].role, 'assistant');
+  assert.equal(generation.output[2].content, 'The answer is 8');
   assert.deepEqual(generation.tools, [{ name: 'calculator' }]);
 
   assert.equal(generation.tags['sigil.framework.name'], 'mastra');
@@ -478,6 +488,48 @@ test('mastra generation spans join the mastra trace with span lineage', async ()
   assert.ok(toolSpanOut, 'tool span exported');
   assert.equal(toolSpanOut.spanContext().traceId, TRACE_ID);
   assert.equal(toolSpanOut.parentSpanContext?.spanId, TOOL_SPAN_ID);
+});
+
+test('mastra exporter does not embed tool messages when disabled or already native', async () => {
+  // Disabled via option.
+  {
+    const { client, exporter } = newClient();
+    const mastraExporter = createSigilMastraExporter(client, { embedToolMessages: false });
+    await emitAgentTrace(mastraExporter);
+    await client.flush();
+    await client.shutdown();
+    assert.equal(exporter.generations[0].output.length, 1, 'only the text output');
+  }
+  // Native tool parts already present in the framework output: no duplication.
+  {
+    const { client, exporter } = newClient();
+    const mastraExporter = createSigilMastraExporter(client);
+    await emit(mastraExporter, 'span_started', agentRunSpan());
+    await emit(mastraExporter, 'span_started', generationSpan());
+    await emit(mastraExporter, 'span_ended', toolSpan());
+    await emit(
+      mastraExporter,
+      'span_ended',
+      endedGenerationSpan({
+        output: {
+          messages: [
+            {
+              role: 'assistant',
+              content: [
+                { type: 'tool-call', toolCallId: 'native-1', toolName: 'calculator', input: { a: 5 } },
+                { type: 'text', text: 'The answer is 8' },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    await client.flush();
+    await client.shutdown();
+    const parts = exporter.generations[0].output.flatMap((message) => message.parts ?? []);
+    assert.equal(parts.filter((part) => part.type === 'tool_call').length, 1, 'no synthesized duplicate');
+    assert.equal(parts[0].toolCall.id, 'native-1');
+  }
 });
 
 test('mastra exporter self-roots spans when joinMastraTrace is disabled', async () => {

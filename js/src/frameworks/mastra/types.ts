@@ -159,6 +159,14 @@ export interface SigilMastraExporterOptions {
   /** Export Mastra `workflow_step` spans as Sigil workflow steps. Defaults to true. */
   exportWorkflowSteps?: boolean;
   /**
+   * Embed each generation's tool round-trips as `tool_call`/`tool_result`
+   * message parts in its output so tools are visible inside the generation
+   * (Mastra's own generation output carries only the final text). Skipped
+   * automatically when the output already contains tool calls. Defaults to
+   * true.
+   */
+  embedToolMessages?: boolean;
+  /**
    * Parent Sigil-created OTel spans on the originating Mastra span context so
    * both land in one trace. Defaults to true — correct when the Mastra spans
    * are also exported over OTLP (e.g. via `@mastra/otel-exporter`). Set false

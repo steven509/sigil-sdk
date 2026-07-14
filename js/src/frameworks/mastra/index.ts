@@ -1,6 +1,6 @@
 import { context as otelContext, trace as otelTrace, ROOT_CONTEXT, TraceFlags, type Tracer } from '@opentelemetry/api';
 import { SigilClient } from '../../client.js';
-import type { GenerationRecorder, GenerationStart, WorkflowStep } from '../../types.js';
+import type { GenerationRecorder, GenerationStart, Message, WorkflowStep } from '../../types.js';
 import {
   asFiniteNumber,
   asRecord,
@@ -20,6 +20,7 @@ import {
   mapToolChoice,
   normalizeMetadataRecord,
   resolveMastraProvider,
+  safeJSONStringify,
   spanAttributeString,
   spanMetadataString,
   splitSystemPrompt,
@@ -102,9 +103,28 @@ interface TraceState {
   stepChainHeads: Map<string, string[]>;
   /** Steps accumulated inside a concurrent construct, keyed by construct id. */
   pendingStepGroups: Map<string, { anchorKey: string; stepIds: string[] }>;
+  /**
+   * Ended tool round-trips awaiting embedding into their generation's output
+   * messages, keyed by the nearest `model_generation` ancestor span id ('' when
+   * none — those attach to the next generation ending in the trace).
+   */
+  pendingToolMessages: Map<string, PendingToolMessage[]>;
+  pendingToolMessageCount: number;
   lastActivity: number;
   cleanupTimer?: ReturnType<typeof setTimeout>;
 }
+
+interface PendingToolMessage {
+  toolName: string;
+  toolCallId: string;
+  inputJSON?: string;
+  resultJSON?: string;
+  isError: boolean;
+  endedAt: number;
+}
+
+/** Cap on buffered tool round-trips per trace (memory guard for tool storms). */
+const maxPendingToolMessagesPerTrace = 200;
 
 function isSigilClient(value: unknown): value is SigilClient {
   return (
@@ -422,9 +442,19 @@ export class SigilMastraExporter implements MastraObservabilityExporterLike {
       recorder.setCallError(new Error(errorMessage));
     }
     const outputMessages = captureOutputs ? mapMastraOutputMessages(span.output) : [];
+    // Surface the turn's tool round-trips inside the generation unless the
+    // framework already put tool parts in the output.
+    const hasNativeToolParts = outputMessages.some((message) =>
+      (message.parts ?? []).some((part) => part.type === 'tool_call' || part.type === 'tool_result'),
+    );
+    const toolMessages =
+      captureOutputs && (this.options.embedToolMessages ?? true) && !hasNativeToolParts
+        ? this.takeToolMessages(state, span.id)
+        : [];
+    const combinedOutput = [...toolMessages, ...outputMessages];
     recorder.setResult({
       input: messages.length > 0 ? messages : undefined,
-      output: outputMessages.length > 0 ? outputMessages : undefined,
+      output: combinedOutput.length > 0 ? combinedOutput : undefined,
       // internalUsage carries token counts rolled up from hidden internal
       // descendants; use it only when the span has no direct usage so the
       // two sources are never double counted.
@@ -599,6 +629,86 @@ export class SigilMastraExporter implements MastraObservabilityExporterLike {
     if (recorderError !== undefined) {
       this.logWarn('sigil mastra exporter failed to record tool execution', recorderError);
     }
+
+    this.bufferToolMessage(state, span, generationSpan, toolName, captureInputs, captureOutputs);
+  }
+
+  /**
+   * Buffers an ended tool round-trip for embedding into its generation's
+   * output messages (Mastra's generation output carries only the final text,
+   * so without this tools are invisible inside the generation).
+   */
+  private bufferToolMessage(
+    state: TraceState,
+    span: MastraExportedSpan,
+    generationSpan: MastraExportedSpan | undefined,
+    toolName: string,
+    captureInputs: boolean,
+    captureOutputs: boolean,
+  ): void {
+    if ((this.options.embedToolMessages ?? true) === false) {
+      return;
+    }
+    if (state.pendingToolMessageCount >= maxPendingToolMessagesPerTrace) {
+      return;
+    }
+    state.pendingToolMessageCount += 1;
+    const attributes = asRecord(span.attributes) ?? {};
+    const key = generationSpan?.id ?? '';
+    const list = state.pendingToolMessages.get(key) ?? [];
+    list.push({
+      toolName,
+      // The span id doubles as the call/result pairing id when Mastra does
+      // not expose the model's toolCallId.
+      toolCallId: asStringOrUndefined(attributes.toolCallId) ?? spanMetadataString(span, 'toolCallId') ?? span.id,
+      inputJSON: captureInputs && span.input !== undefined ? safeJSONStringify(span.input) : undefined,
+      resultJSON: captureOutputs && span.output !== undefined ? safeJSONStringify(span.output) : undefined,
+      isError: span.errorInfo !== undefined || attributes.success === false,
+      endedAt: (coerceDate(span.endTime) ?? new Date()).getTime(),
+    });
+    state.pendingToolMessages.set(key, list);
+  }
+
+  /**
+   * Tool round-trips for a generation, rendered as the message pair each
+   * produces (assistant `tool_call` + tool-role `tool_result`). Consumes the
+   * buffered records for this generation plus any without a generation
+   * ancestor (e.g. client tool calls parented on the agent run).
+   */
+  private takeToolMessages(state: TraceState, generationSpanId: string): Message[] {
+    const records = [
+      ...(state.pendingToolMessages.get(generationSpanId) ?? []),
+      ...(state.pendingToolMessages.get('') ?? []),
+    ].sort((a, b) => a.endedAt - b.endedAt);
+    state.pendingToolMessages.delete(generationSpanId);
+    state.pendingToolMessages.delete('');
+    state.pendingToolMessageCount = Math.max(0, state.pendingToolMessageCount - records.length);
+
+    return records.flatMap((record): Message[] => [
+      {
+        role: 'assistant',
+        parts: [
+          {
+            type: 'tool_call',
+            toolCall: { id: record.toolCallId, name: record.toolName, inputJSON: record.inputJSON },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        parts: [
+          {
+            type: 'tool_result',
+            toolResult: {
+              toolCallId: record.toolCallId,
+              name: record.toolName,
+              contentJSON: record.resultJSON,
+              isError: record.isError ? true : undefined,
+            },
+          },
+        ],
+      },
+    ]);
   }
 
   private recordWorkflowStep(state: TraceState, span: MastraExportedSpan): void {
@@ -888,6 +998,8 @@ export class SigilMastraExporter implements MastraObservabilityExporterLike {
       stepGenerationLinks: new Map(),
       stepChainHeads: new Map(),
       pendingStepGroups: new Map(),
+      pendingToolMessages: new Map(),
+      pendingToolMessageCount: 0,
       lastActivity: Date.now(),
     };
     this.traces.set(traceId, state);
