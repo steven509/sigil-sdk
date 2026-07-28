@@ -94,6 +94,19 @@ import {
   validateWorkflowStep,
 } from './utils.js';
 
+/**
+ * Debug snapshot buffers keep only the most recent records so long-running
+ * processes (e.g. framework exporters) do not grow memory unboundedly.
+ */
+const debugSnapshotMaxRecords = 1000;
+
+function pushDebugRecord<T>(buffer: T[], record: T): void {
+  buffer.push(record);
+  if (buffer.length > debugSnapshotMaxRecords) {
+    buffer.splice(0, buffer.length - debugSnapshotMaxRecords);
+  }
+}
+
 const spanAttrGenerationID = 'agento11y.generation.id';
 const spanAttrSDKName = 'agento11y.sdk.name';
 const spanAttrFrameworkRunID = 'agento11y.framework.run_id';
@@ -307,7 +320,7 @@ export class Agento11yClient {
     // debug buffer only after a successful enqueue keeps debugSnapshot from
     // listing a step the caller was told failed to enqueue.
     this.internalEnqueueWorkflowStep(normalized);
-    this.workflowSteps.push(cloneWorkflowStep(normalized));
+    pushDebugRecord(this.workflowSteps, cloneWorkflowStep(normalized));
   }
 
   /**
@@ -627,7 +640,11 @@ export class Agento11yClient {
     await this.shutdownPromise;
   }
 
-  /** Returns a cloned in-memory snapshot for debugging and tests. */
+  /**
+   * Returns a cloned in-memory snapshot for debugging and tests. Each buffer
+   * retains at most the {@link debugSnapshotMaxRecords} most recent records
+   * so long-running processes do not grow memory unboundedly.
+   */
   debugSnapshot(): Agento11yDebugSnapshot {
     return {
       generations: this.generations.map(cloneGeneration),
@@ -659,11 +676,11 @@ export class Agento11yClient {
   }
 
   internalRecordGeneration(generation: Generation): void {
-    this.generations.push(cloneGeneration(generation));
+    pushDebugRecord(this.generations, cloneGeneration(generation));
   }
 
   internalRecordToolExecution(toolExecution: ToolExecution): void {
-    this.toolExecutions.push(cloneToolExecution(toolExecution));
+    pushDebugRecord(this.toolExecutions, cloneToolExecution(toolExecution));
   }
 
   internalEnqueueGeneration(generation: Generation): void {

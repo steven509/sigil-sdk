@@ -351,6 +351,7 @@ Use module subpath exports for framework callback integrations:
 - Google ADK: `@grafana/agento11y/google-adk`
 - Vercel AI SDK: `@grafana/agento11y/vercel-ai-sdk`
 - Strands Agents: `@grafana/agento11y/strands`
+- Mastra: `@grafana/agento11y/mastra`
 - LangChain guide: `docs/frameworks/langchain.md`
 - LangGraph guide: `docs/frameworks/langgraph.md`
 - OpenAI Agents guide: `docs/frameworks/openai-agents.md`
@@ -358,6 +359,7 @@ Use module subpath exports for framework callback integrations:
 - Google ADK guide: `docs/frameworks/google-adk.md`
 - Vercel AI SDK guide: `docs/frameworks/vercel-ai-sdk.md`
 - Strands Agents guide: `docs/frameworks/strands.md`
+- Mastra guide: `docs/frameworks/mastra.md`
 
 ```ts
 import { Agento11yClient } from "@grafana/agento11y";
@@ -368,6 +370,7 @@ import { withAgento11yLlamaIndexCallbacks } from "@grafana/agento11y/llamaindex"
 import { withAgento11yGoogleAdkPlugins } from "@grafana/agento11y/google-adk";
 import { createAgento11yVercelAiSdk } from "@grafana/agento11y/vercel-ai-sdk";
 import { withAgento11yStrandsHooks } from "@grafana/agento11y/strands";
+import { createAgento11yMastra } from "@grafana/agento11y/mastra";
 import { Runner } from "@openai/agents";
 import { CallbackManager } from "llamaindex";
 
@@ -381,18 +384,30 @@ const llamaIndexConfig = withAgento11yLlamaIndexCallbacks({ callbackManager }, c
 const googleAdkRunnerConfig = withAgento11yGoogleAdkPlugins(undefined, client, { providerResolver: "auto" });
 const vercelAiSdk = createAgento11yVercelAiSdk(client, { agentName: "vercel-agent" });
 const strandsConfig = withAgento11yStrandsHooks(undefined, client, { conversationId: "chat-123" });
+const mastraExporter = createAgento11yMastra(client, { agentVersion: "1.0.0" });
+```
+
+Mastra uses an exporter mechanism instead of callbacks — register the exporter in the Mastra
+observability config (see `docs/frameworks/mastra.md`):
+
+```ts
+new Mastra({
+  observability: new Observability({
+    configs: { agento11y: { serviceName: "my-service", exporters: [mastraExporter] } },
+  }),
+});
 ```
 
 Framework handlers use the `Agento11yClient` instance you pass in. If that client is configured with
 `generationSanitizer`, the same redaction policy applies automatically to generations recorded
 through LangChain, LangGraph, OpenAI Agents, LlamaIndex, Google ADK, and Vercel AI SDK integrations.
-The same redaction policy also applies to Strands Agents generations.
+The same redaction policy also applies to Strands Agents and Mastra generations.
 
 Each framework handler injects:
 
-- `agento11y.framework.name` (`langchain`, `langgraph`, `openai-agents`, `llamaindex`, `google-adk`, `vercel-ai-sdk`, or `strands`)
-- `agento11y.framework.source` (`handler` for existing callback handlers, `framework` for Vercel AI SDK hooks, `hooks` for Strands)
-- `agento11y.framework.language` (`javascript` for existing callback handlers, `typescript` for Vercel AI SDK and Strands hooks)
+- `agento11y.framework.name` (`langchain`, `langgraph`, `openai-agents`, `llamaindex`, `google-adk`, `vercel-ai-sdk`, `strands`, or `mastra`)
+- `agento11y.framework.source` (`handler` for existing callback handlers, `framework` for Vercel AI SDK hooks, `hooks` for Strands, `exporter` for Mastra)
+- `agento11y.framework.language` (`javascript` for existing callback handlers, `typescript` for Vercel AI SDK, Strands, and Mastra)
 - `metadata["agento11y.framework.run_id"]`
 - `metadata["agento11y.framework.thread_id"]` (when present)
 - `metadata["agento11y.framework.parent_run_id"]` (when available)

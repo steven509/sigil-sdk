@@ -1,6 +1,6 @@
 {
   "name": "@grafana/agento11y",
-  "version": "0.13.0",
+  "version": "0.13.0-mastra.1",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -42,6 +42,10 @@
     "./vercel-ai-sdk": {
       "types": "./dist/frameworks/vercel-ai-sdk/index.d.ts",
       "import": "./dist/frameworks/vercel-ai-sdk/index.js"
+    },
+    "./mastra": {
+      "types": "./dist/frameworks/mastra/index.d.ts",
+      "import": "./dist/frameworks/mastra/index.js"
     },
     "./strands": {
       "types": "./dist/frameworks/strands/index.d.ts",
