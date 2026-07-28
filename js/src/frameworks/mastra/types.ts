@@ -26,6 +26,7 @@ export const MASTRA_SPAN_TYPES = {
   toolCall: 'tool_call',
   mcpToolCall: 'mcp_tool_call',
   clientToolCall: 'client_tool_call',
+  providerToolCall: 'provider_tool_call',
   workflowRun: 'workflow_run',
   workflowStep: 'workflow_step',
 } as const;

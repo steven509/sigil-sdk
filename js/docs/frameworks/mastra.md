@@ -4,6 +4,8 @@ Use `createAgento11yMastra(...)` to instrument [Mastra](https://mastra.ai) agent
 
 Unlike the callback-based adapters, this integration plugs into Mastra's observability exporter mechanism (`@mastra/core` >= 1.16): Mastra emits typed tracing events for every agent run, model generation, tool call, and workflow step, and the exporter maps them onto the Agento11y data model.
 
+Works with plain `Mastra` instances and with [`AgentController`](#agentcontroller) — see that section for its separate wiring.
+
 ## Install
 
 ```bash
@@ -45,7 +47,7 @@ exporters: [createAgento11yMastra({ agentVersion: '1.0.0' })],
 | Mastra span | Agento11y record |
 |-------------|--------------|
 | `model_generation` | Generation (input/output messages, usage incl. cache + reasoning tokens, stop reason, response id/model, TTFT) + `generateText`/`streamText` OTel span + `gen_ai.client.*` metrics |
-| `tool_call`, `mcp_tool_call`, `client_tool_call` | `execute_tool` OTel span (arguments/results follow the client content-capture mode) + embedded `tool_call`/`tool_result` message parts in the owning generation's output (`embedToolMessages: false` to disable; skipped when the framework output already carries tool parts) |
+| `tool_call`, `mcp_tool_call`, `client_tool_call`, `provider_tool_call` | `execute_tool` OTel span (arguments/results follow the client content-capture mode) + embedded `tool_call`/`tool_result` message parts in the owning generation's output (`embedToolMessages: false` to disable; skipped when the framework output already carries tool parts) |
 | `model_step`, `model_chunk` (reasoning) | Used to reconstruct the generation's real interleaving: per model round an assistant message (thinking → text → tool calls, with the model's `toolCallId`s) followed by that round's tool results, instead of a flat "all tools, then answer" |
 | `workflow_step` | Workflow step with `linkedGenerationIds` and sequential `parentStepIds` |
 | `agent_run` | Context source: agent name/version, conversation id, system instructions, available tools |
@@ -53,6 +55,53 @@ exporters: [createAgento11yMastra({ agentVersion: '1.0.0' })],
 Generation ids are the originating Mastra span ids, so re-exported spans are idempotent and applications can reference a generation wherever the span id is known. Successive generations in one trace are chained through `parentGenerationIds` for the Dependencies view; use `customizeGeneration` to override the linking scheme (e.g. point a turn's generations at their shared `agent_run` span via `span.parentSpanId`). Workflow steps form a true DAG: steps inside `.parallel()`/`.branch()` blocks share the preceding step as parent, and the step after the block fans in from all branches.
 
 When Mastra hides model spans (`TracingPolicy` internal spans or `excludeSpanTypes`), their token usage still reaches Agento11y: the rollup Mastra places on the exported ancestor (`internalUsage`) is exported as a usage-only generation (marked `agento11y.framework.mastra.usage_rollup`), so cost dashboards stay correct. Mastra's `hideInput`/`hideOutput` tracing options are honored — hidden inputs are not reconstructed from span attributes such as agent instructions.
+
+## AgentController
+
+[`AgentController`](https://mastra.ai/docs/agent-controller/overview) (`@mastra/core/agent-controller`, named `AgentController` since `@mastra/core` 1.47; previously `Harness`) wraps an `Agent` with session, mode, approval, and subagent management. It does **not** take a `Mastra` instance, so it does not pick up `new Mastra({ observability })` — wire it one of two ways.
+
+**Pass `observability` to the constructor.** AgentController forwards it to the internal Mastra it builds during `init()` (requires `@mastra/core` >= 1.29):
+
+```ts
+import { AgentController } from '@mastra/core/agent-controller';
+import { Observability } from '@mastra/observability';
+
+const observability = new Observability({
+  configs: { agento11y: { serviceName: 'my-service', exporters: [createAgento11yMastra(agento11y)] } },
+});
+
+const controller = new AgentController({
+  agent,
+  storage,        // required — see below
+  observability,
+  modes: [{ id: 'default', instructions: '…' }],
+});
+await controller.init();
+```
+
+> **`storage` is required for this path.** AgentController only builds its internal Mastra when `storage` is set. Without it, `observability` is **silently discarded** — no spans, no error.
+
+**Or register the controller on a Mastra you already own**, and it inherits that instance's observability (its own `observability` option is then ignored):
+
+```ts
+const mastra = new Mastra({
+  agentControllers: { myController: controller },
+  observability,
+});
+```
+
+### What is and isn't traced
+
+AgentController emits no spans of its own — it forwards tracing context into the underlying agent, so what you get is the normal agent/model/tool span set covered above:
+
+| Surface | Traced |
+|---|---|
+| Agent turns, model calls, tools | Yes — the standard mapping above |
+| Subagents (`session.subagents`) | Yes — the subagent tool's `tool_call` plus the child's `agent_run`, nested in the same trace |
+| Tool approvals (`session.approval`) | Partly — the approval *gate* emits no span, since it suspends before the tool runs. On resume Mastra opens a second `agent_run` named `… (resumed)` in the same trace; generations under it chain onto the pre-approval ones |
+| Mode switches, session create/resume | No — these are session event-bus events (`session.subscribe(...)`), not spans |
+| Workspace/skill actions | Not yet mapped — the enclosing `tool_call` is captured, but the nested `workspace_action` detail (category, provider, success) is dropped |
+| Observational memory (`session.om`) | Not yet mapped — OM emits `generic` spans (`om.observer`, `om.reflector`), which this exporter ignores. Any model calls beneath them are still captured as generations, and usage from internal spans still rolls up |
 
 ## Conversation ID
 

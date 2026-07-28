@@ -74,6 +74,10 @@ const toolSpanTypes = new Set<string>([
   MASTRA_SPAN_TYPES.toolCall,
   MASTRA_SPAN_TYPES.mcpToolCall,
   MASTRA_SPAN_TYPES.clientToolCall,
+  // Provider-executed tools (server-side web search, code execution). Mastra
+  // reparents these onto the nearest `agent_run` rather than the model span,
+  // so they arrive without a `model_generation` ancestor.
+  MASTRA_SPAN_TYPES.providerToolCall,
 ]);
 
 /**
@@ -693,7 +697,9 @@ export class Agento11yMastraExporter implements MastraObservabilityExporterLike 
         ? 'mcp'
         : span.type === MASTRA_SPAN_TYPES.clientToolCall
           ? 'client'
-          : (asStringOrUndefined(attributes.toolType) ?? 'tool');
+          : span.type === MASTRA_SPAN_TYPES.providerToolCall
+            ? 'provider'
+            : (asStringOrUndefined(attributes.toolType) ?? 'tool');
 
     const recorder = this.withMastraParentContext(span, () =>
       this.client.startToolExecution({

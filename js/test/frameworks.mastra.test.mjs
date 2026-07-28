@@ -423,6 +423,57 @@ test('mastra exporter captures tool content on spans by default', async () => {
   assert.equal(toolSpanOut.attributes['gen_ai.tool.call.result'], '{"result":8}');
 });
 
+test('mastra exporter records provider-executed tool calls', async () => {
+  const spanExporter = new InMemorySpanExporter();
+  const tracerProvider = new BasicTracerProvider({
+    spanProcessors: [new SimpleSpanProcessor(spanExporter)],
+  });
+  const { client } = newClient({ tracer: tracerProvider.getTracer('agento11y-mastra-test') });
+  const mastraExporter = createAgento11yMastra(client);
+
+  // Mastra reparents `provider_tool_call` onto the nearest `agent_run`, so it
+  // arrives with no `model_generation` ancestor — unlike every other tool span.
+  const providerTool = () =>
+    toolSpan({
+      id: '00000000000000c1',
+      name: "provider_tool: 'web_search'",
+      type: 'provider_tool_call',
+      parentSpanId: AGENT_SPAN_ID,
+      entityId: 'web_search',
+      entityName: 'web_search',
+      attributes: {
+        toolType: 'provider-tool',
+        toolDescription: 'Server-side web search',
+        toolCallId: 'srvtoolu_abc123',
+        success: true,
+      },
+      input: { query: 'grafana agento11y' },
+      output: { results: ['https://example.test'] },
+    });
+
+  await emit(mastraExporter, 'span_started', agentRunSpan());
+  await emit(mastraExporter, 'span_started', providerTool({ endTime: undefined }));
+  await emit(mastraExporter, 'span_ended', providerTool());
+  await emit(mastraExporter, 'span_ended', agentRunSpan({ endTime: new Date('2026-07-13T10:00:02.100Z') }));
+  await client.flush();
+
+  const snapshot = client.debugSnapshot();
+  assert.equal(snapshot.toolExecutions.length, 1, 'provider tool recorded as a tool execution');
+  const execution = snapshot.toolExecutions[0];
+  assert.equal(execution.toolName, 'web_search');
+  assert.equal(execution.toolType, 'provider');
+  assert.equal(execution.toolCallId, 'srvtoolu_abc123');
+
+  await client.shutdown();
+  const toolSpanOut = spanExporter.getFinishedSpans().find((span) => span.name === 'execute_tool web_search');
+  await tracerProvider.shutdown();
+  assert.ok(toolSpanOut, 'provider tool span exported');
+  assert.equal(toolSpanOut.attributes['gen_ai.tool.type'], 'provider');
+  assert.equal(toolSpanOut.attributes['gen_ai.tool.call.id'], 'srvtoolu_abc123');
+  // Resolved from the `agent_run` ancestor even without a generation ancestor.
+  assert.equal(toolSpanOut.attributes['gen_ai.agent.name'], 'Test Agent');
+});
+
 test('mastra exporter resolves providers via aliases, inference, and resolvers', async () => {
   const cases = [
     { attributes: { model: 'gemini-2.5-pro', provider: 'google.generative-ai', streaming: false }, expected: 'gemini' },
