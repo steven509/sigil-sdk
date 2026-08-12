@@ -449,6 +449,12 @@ export class Agento11yMastraExporter implements MastraObservabilityExporterLike 
       this.recordToolExecution(state, span);
       return;
     }
+    if (span.type === MASTRA_SPAN_TYPES.workspaceAction) {
+      if (this.options.exportWorkspaceActions ?? true) {
+        this.recordWorkspaceAction(state, span);
+      }
+      return;
+    }
     if (span.type === MASTRA_SPAN_TYPES.workflowStep) {
       if (this.options.exportWorkflowSteps ?? true) {
         this.recordWorkflowStep(state, span);
@@ -730,8 +736,11 @@ export class Agento11yMastraExporter implements MastraObservabilityExporterLike 
     );
 
     const errorMessage = mapMastraError(span.errorInfo);
-    if (errorMessage !== undefined) {
-      recorder.setCallError(new Error(errorMessage));
+    // `setCallError` also becomes the recorder's own error, so the tool's
+    // failure would otherwise be re-reported below as an exporter malfunction.
+    const callError = errorMessage === undefined ? undefined : new Error(errorMessage);
+    if (callError !== undefined) {
+      recorder.setCallError(callError);
     }
     recorder.setResult({
       arguments: captureInputs ? span.input : undefined,
@@ -740,11 +749,73 @@ export class Agento11yMastraExporter implements MastraObservabilityExporterLike 
     });
     recorder.end();
     const recorderError = recorder.getError();
-    if (recorderError !== undefined) {
+    if (recorderError !== undefined && recorderError !== callError) {
       this.logWarn('agento11y mastra exporter failed to record tool execution', recorderError);
     }
 
     this.bufferToolMessage(state, span, generationSpan, toolName, captureInputs, captureOutputs);
+  }
+
+  /**
+   * Records a workspace action (filesystem, sandbox, search, skill, or mount)
+   * as a tool execution typed `workspace:<category>`, which is how skill
+   * activations surface.
+   *
+   * Unlike the model-driven tool spans these are not embedded into the
+   * generation's output messages: the model never emitted them as tool calls,
+   * so replaying them into the transcript would misrepresent the turn. Mastra
+   * names these spans `workspace:<category>:<operation>` and inherits
+   * `entityName` from the enclosing tool call, so the operation comes from the
+   * span name rather than the entity.
+   */
+  private recordWorkspaceAction(state: TraceState, span: MastraExportedSpan): void {
+    const attributes = asRecord(span.attributes) ?? {};
+    const category = asStringOrUndefined(attributes.category);
+    const segments = typeof span.name === 'string' ? span.name.split(':') : [];
+    const operation = segments.length >= 3 ? segments.slice(2).join(':') : undefined;
+    const toolName = operation ?? (typeof span.name === 'string' ? span.name : undefined);
+    if (toolName === undefined || toolName.trim().length === 0) {
+      return;
+    }
+
+    const captureInputs = this.options.captureInputs ?? true;
+    const captureOutputs = this.options.captureOutputs ?? true;
+    const agentSpan = this.findAncestor(state, span, MASTRA_SPAN_TYPES.agentRun);
+
+    const recorder = this.withMastraParentContext(span, () =>
+      this.client.startToolExecution({
+        toolName,
+        toolType: category === undefined ? 'workspace' : `workspace:${category}`,
+        conversationId: this.resolveConversationId(state, span),
+        agentName: this.resolveAgentName(agentSpan),
+        agentVersion: this.resolveAgentVersion(agentSpan),
+        includeContent: captureInputs || captureOutputs,
+        startedAt: coerceDate(span.startTime) ?? new Date(),
+      }),
+    );
+
+    const errorMessage = mapMastraError(span.errorInfo);
+    // Mastra reports workspace failures via the `success` attribute even when
+    // it attaches no error info, so the execution would otherwise look clean.
+    const failureMessage =
+      errorMessage ??
+      (attributes.success === false ? `workspace ${category ?? 'action'} '${toolName}' failed` : undefined);
+    const callError = failureMessage === undefined ? undefined : new Error(failureMessage);
+    if (callError !== undefined) {
+      recorder.setCallError(callError);
+    }
+    recorder.setResult({
+      // Mastra already summarizes these (e.g. `{ resultCount }`) rather than
+      // returning file contents, and redacts env/secret-shaped fields.
+      arguments: captureInputs ? span.input : undefined,
+      result: captureOutputs ? span.output : undefined,
+      completedAt: coerceDate(span.endTime) ?? new Date(),
+    });
+    recorder.end();
+    const recorderError = recorder.getError();
+    if (recorderError !== undefined && recorderError !== callError) {
+      this.logWarn('agento11y mastra exporter failed to record workspace action', recorderError);
+    }
   }
 
   /**

@@ -474,6 +474,130 @@ test('mastra exporter records provider-executed tool calls', async () => {
   assert.equal(toolSpanOut.attributes['gen_ai.agent.name'], 'Test Agent');
 });
 
+// Shape captured from a real @mastra/core 1.58.0 workspace tool run: the span
+// is named `workspace:<category>:<operation>`, inherits entityName from the
+// enclosing tool call, and carries a summarized output rather than file bytes.
+function workspaceActionSpan(overrides = {}) {
+  return {
+    id: '00000000000000d1',
+    traceId: TRACE_ID,
+    name: 'workspace:skill:activateSkill',
+    type: 'workspace_action',
+    parentSpanId: TOOL_SPAN_ID,
+    isRootSpan: false,
+    isEvent: false,
+    entityType: 'tool',
+    entityName: 'view',
+    startTime: new Date('2026-07-13T10:00:00.750Z'),
+    endTime: new Date('2026-07-13T10:00:00.850Z'),
+    attributes: {
+      category: 'skill',
+      workspaceId: 'ws-abc',
+      workspaceName: 'workspace-abc',
+      filesystemProvider: 'local',
+      success: true,
+    },
+    metadata: {},
+    input: { skill: 'code-review' },
+    output: { resultCount: 1 },
+    ...overrides,
+  };
+}
+
+test('mastra exporter records workspace actions including skill activations', async () => {
+  const { client } = newClient();
+  const mastraExporter = createAgento11yMastra(client);
+
+  await emit(mastraExporter, 'span_started', agentRunSpan());
+  await emit(mastraExporter, 'span_started', generationSpan());
+  await emit(mastraExporter, 'span_started', toolSpan({ endTime: undefined }));
+  await emit(mastraExporter, 'span_ended', workspaceActionSpan());
+  await emit(mastraExporter, 'span_ended', toolSpan());
+  await emit(mastraExporter, 'span_ended', endedGenerationSpan());
+  await client.flush();
+
+  const snapshot = client.debugSnapshot();
+  const skill = snapshot.toolExecutions.find((execution) => execution.toolType === 'workspace:skill');
+  assert.ok(skill, 'skill activation recorded');
+  assert.equal(skill.toolName, 'activateSkill');
+  assert.equal(skill.agentName, 'Test Agent');
+
+  // The outer workspace tool call is still recorded in its own right.
+  assert.ok(
+    snapshot.toolExecutions.some((execution) => execution.toolName === 'calculator'),
+    'enclosing tool call still recorded',
+  );
+
+  // The model never emitted this as a tool call, so it must not be replayed
+  // into the generation's output messages.
+  const generation = snapshot.generations.at(-1);
+  const replayed = JSON.stringify(generation?.output ?? []).includes('activateSkill');
+  assert.equal(replayed, false, 'workspace action not embedded in generation output');
+
+  await client.shutdown();
+});
+
+test('mastra exporter flags failed workspace actions and honors the opt-out', async () => {
+  const { client } = newClient();
+  const mastraExporter = createAgento11yMastra(client);
+  await emit(mastraExporter, 'span_started', agentRunSpan());
+  await emit(
+    mastraExporter,
+    'span_ended',
+    // Mastra reports failure via `success` without attaching error info.
+    workspaceActionSpan({
+      attributes: { category: 'sandbox', success: false },
+      name: 'workspace:sandbox:executeCommand',
+    }),
+  );
+  await client.flush();
+  const failed = client.debugSnapshot().toolExecutions.at(-1);
+  assert.equal(failed.toolType, 'workspace:sandbox');
+  assert.ok(failed.callError, 'failed workspace action carries a call error');
+  await client.shutdown();
+
+  const off = newClient();
+  const disabled = createAgento11yMastra(off.client, { exportWorkspaceActions: false });
+  await emit(disabled, 'span_started', agentRunSpan());
+  await emit(disabled, 'span_ended', workspaceActionSpan());
+  await off.client.flush();
+  assert.equal(off.client.debugSnapshot().toolExecutions.length, 0, 'opt-out suppresses workspace actions');
+  await off.client.shutdown();
+});
+
+test('mastra exporter does not report tool failures as exporter malfunctions', async () => {
+  const warnings = [];
+  const { client } = newClient();
+  const mastraExporter = createAgento11yMastra(client, {
+    logger: { warn: (message) => warnings.push(String(message)) },
+  });
+
+  // A tool that genuinely failed is normal telemetry, not an exporter problem:
+  // `setCallError` doubles as the recorder's own error, so this used to be
+  // logged as "failed to record tool execution".
+  await emit(mastraExporter, 'span_started', agentRunSpan());
+  await emit(mastraExporter, 'span_started', generationSpan());
+  await emit(mastraExporter, 'span_ended', toolSpan({ errorInfo: { message: 'boom' } }));
+  await emit(
+    mastraExporter,
+    'span_ended',
+    workspaceActionSpan({ attributes: { category: 'sandbox', success: false } }),
+  );
+  await client.flush();
+
+  const snapshot = client.debugSnapshot();
+  assert.ok(
+    snapshot.toolExecutions.every((execution) => execution.callError),
+    'both failures recorded as call errors',
+  );
+  assert.deepEqual(
+    warnings.filter((message) => message.includes('failed to record')),
+    [],
+    'no spurious exporter-failure warnings',
+  );
+  await client.shutdown();
+});
+
 test('mastra exporter resolves providers via aliases, inference, and resolvers', async () => {
   const cases = [
     { attributes: { model: 'gemini-2.5-pro', provider: 'google.generative-ai', streaming: false }, expected: 'gemini' },

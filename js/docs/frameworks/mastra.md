@@ -4,7 +4,7 @@ Use `createAgento11yMastra(...)` to instrument [Mastra](https://mastra.ai) agent
 
 Unlike the callback-based adapters, this integration plugs into Mastra's observability exporter mechanism (`@mastra/core` >= 1.16): Mastra emits typed tracing events for every agent run, model generation, tool call, and workflow step, and the exporter maps them onto the Agento11y data model.
 
-Works with plain `Mastra` instances and with [`AgentController`](#agentcontroller) — see that section for its separate wiring.
+Works with plain `Mastra` instances and with [`AgentController`](#agentcontroller) — see that section for its separate wiring. Verified against `@mastra/core` 1.58.
 
 ## Install
 
@@ -50,6 +50,7 @@ exporters: [createAgento11yMastra({ agentVersion: '1.0.0' })],
 | `tool_call`, `mcp_tool_call`, `client_tool_call`, `provider_tool_call` | `execute_tool` OTel span (arguments/results follow the client content-capture mode) + embedded `tool_call`/`tool_result` message parts in the owning generation's output (`embedToolMessages: false` to disable; skipped when the framework output already carries tool parts) |
 | `model_step`, `model_chunk` (reasoning) | Used to reconstruct the generation's real interleaving: per model round an assistant message (thinking → text → tool calls, with the model's `toolCallId`s) followed by that round's tool results, instead of a flat "all tools, then answer" |
 | `workflow_step` | Workflow step with `linkedGenerationIds` and sequential `parentStepIds` |
+| `workspace_action` | Tool execution typed `workspace:<category>` (`filesystem`, `sandbox`, `search`, `skill`, `mount`) — this is how skill activations surface. Named for the operation (`activateSkill`, `listFiles`), with Mastra's summarized input/output. Nests inside the workspace tool call that triggered it, so one `view` call yields both the `view` execution and its `workspace:filesystem` action; set `exportWorkspaceActions: false` to record only the outer call. Unlike model-driven tools these are never embedded into generation output messages, since the model did not emit them |
 | `agent_run` | Context source: agent name/version, conversation id, system instructions, available tools |
 
 Generation ids are the originating Mastra span ids, so re-exported spans are idempotent and applications can reference a generation wherever the span id is known. Successive generations in one trace are chained through `parentGenerationIds` for the Dependencies view; use `customizeGeneration` to override the linking scheme (e.g. point a turn's generations at their shared `agent_run` span via `span.parentSpanId`). Workflow steps form a true DAG: steps inside `.parallel()`/`.branch()` blocks share the preceding step as parent, and the step after the block fans in from all branches.
@@ -100,7 +101,7 @@ AgentController emits no spans of its own — it forwards tracing context into t
 | Subagents (`session.subagents`) | Yes — the subagent tool's `tool_call` plus the child's `agent_run`, nested in the same trace |
 | Tool approvals (`session.approval`) | Partly — the approval *gate* emits no span, since it suspends before the tool runs. On resume Mastra opens a second `agent_run` named `… (resumed)` in the same trace; generations under it chain onto the pre-approval ones |
 | Mode switches, session create/resume | No — these are session event-bus events (`session.subscribe(...)`), not spans |
-| Workspace/skill actions | Not yet mapped — the enclosing `tool_call` is captured, but the nested `workspace_action` detail (category, provider, success) is dropped |
+| Workspace/skill actions | Yes — `workspace_action` spans become `workspace:<category>` tool executions, including skill activations. See the mapping table above |
 | Observational memory (`session.om`) | Not yet mapped — OM emits `generic` spans (`om.observer`, `om.reflector`), which this exporter ignores. Any model calls beneath them are still captured as generations, and usage from internal spans still rolls up |
 
 ## Conversation ID

@@ -29,6 +29,7 @@ export const MASTRA_SPAN_TYPES = {
   providerToolCall: 'provider_tool_call',
   workflowRun: 'workflow_run',
   workflowStep: 'workflow_step',
+  workspaceAction: 'workspace_action',
 } as const;
 
 /**
@@ -159,6 +160,17 @@ export interface Agento11yMastraOptions {
   customizeGeneration?: (seed: GenerationStart, span: MastraExportedSpan) => GenerationStart | undefined;
   /** Export Mastra `workflow_step` spans as Agento11y workflow steps. Defaults to true. */
   exportWorkflowSteps?: boolean;
+  /**
+   * Export Mastra `workspace_action` spans (filesystem, sandbox, search, skill,
+   * and mount operations) as tool executions with a `workspace:<category>` tool
+   * type — this is how skill activations surface.
+   *
+   * These nest inside the workspace tool call that triggered them, so a single
+   * `view` tool call yields both the `view` execution and its
+   * `workspace:filesystem` action. Set to false to record only the outer tool
+   * call. Defaults to true.
+   */
+  exportWorkspaceActions?: boolean;
   /**
    * Embed each generation's tool round-trips as `tool_call`/`tool_result`
    * message parts in its output so tools are visible inside the generation
