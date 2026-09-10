@@ -4,7 +4,7 @@ Use `createAgento11yMastra(...)` to instrument [Mastra](https://mastra.ai) agent
 
 Unlike the callback-based adapters, this integration plugs into Mastra's observability exporter mechanism (`@mastra/core` >= 1.16): Mastra emits typed tracing events for every agent run, model generation, tool call, and workflow step, and the exporter maps them onto the Agento11y data model.
 
-Works with plain `Mastra` instances and with [`AgentController`](#agentcontroller) — see that section for its separate wiring. Verified against `@mastra/core` 1.58.
+Works with plain `Mastra` instances and with [`AgentController`](#agentcontroller) — see that section for its separate wiring. Verified against `@mastra/core` 1.65.
 
 ## Install
 
