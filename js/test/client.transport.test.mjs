@@ -1497,3 +1497,49 @@ function stopGRPCServer(server) {
     });
   });
 }
+
+test('export failure logs surface the underlying cause, not just the summary', async () => {
+  // Two failing batches aggregate into an AggregateError whose own message is a
+  // generic summary. Flattening to `.message` alone hid the HTTP status, which
+  // made a plain 401 read as an opaque "export failed".
+  const server = createServer((_req, res) => {
+    res.writeHead(401, { 'content-type': 'application/json' });
+    res.end('{"status":"error","error":"authentication error: invalid token"}');
+  });
+  await new Promise((resolve) => server.listen(0, resolve));
+  const { port } = server.address();
+
+  const warnings = [];
+  const defaults = defaultConfig();
+  const client = new Agento11yClient({
+    generationExport: {
+      ...defaults.generationExport,
+      protocol: 'http',
+      endpoint: `http://127.0.0.1:${port}`,
+      batchSize: 1,
+      flushIntervalMs: 0,
+      maxRetries: 0,
+    },
+    logger: { warn: (message) => warnings.push(String(message)) },
+  });
+
+  // Two generations with batchSize 1 produce two failing batches, hence the aggregate.
+  for (const id of ['a', 'b']) {
+    await client.startGeneration(
+      { conversationId: `conv-${id}`, model: { provider: 'openai', name: 'gpt-5' } },
+      async (rec) => rec.setResult({ output: [{ role: 'assistant', content: id }] }),
+    );
+  }
+  try {
+    await client.flush();
+  } catch {
+    // The caller-facing throw is not what this test pins; the log line is.
+  }
+  await client.shutdown().catch(() => {});
+  server.close();
+
+  const exportWarning = warnings.find((w) => w.includes('export failed'));
+  assert.ok(exportWarning, `expected an export failure warning, got ${JSON.stringify(warnings)}`);
+  assert.match(exportWarning, /401/, 'status code survives into the log line');
+  assert.match(exportWarning, /invalid token/, 'response body survives into the log line');
+});

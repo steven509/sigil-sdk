@@ -567,10 +567,10 @@ test('mastra exporter flags failed workspace actions and honors the opt-out', as
 
 test('mastra exporter does not report tool failures as exporter malfunctions', async () => {
   const warnings = [];
-  const { client } = newClient();
-  const mastraExporter = createAgento11yMastra(client, {
-    logger: { warn: (message) => warnings.push(String(message)) },
-  });
+  // The exporter has no logger option: with Mastra's logger absent it falls back
+  // to the client's, so capture there or the assertion below is vacuous.
+  const { client } = newClient({ logger: { warn: (message) => warnings.push(String(message)) } });
+  const mastraExporter = createAgento11yMastra(client);
 
   // A tool that genuinely failed is normal telemetry, not an exporter problem:
   // `setCallError` doubles as the recorder's own error, so this used to be

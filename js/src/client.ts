@@ -100,6 +100,27 @@ import {
  */
 const debugSnapshotMaxRecords = 1000;
 
+/**
+ * Renders an error for a log line without losing the detail that actually
+ * identifies the failure. A batched export rejects as an `AggregateError` whose
+ * own message is a generic summary, so flattening to `.message` alone hides the
+ * per-batch causes (an HTTP status and response body, for example).
+ */
+function describeError(error: unknown, depth = 0): string {
+  const err = asError(error);
+  if (depth >= 3) {
+    return err.message;
+  }
+  if (err instanceof AggregateError && err.errors.length > 0) {
+    const causes = err.errors.map((nested) => describeError(nested, depth + 1)).join('; ');
+    return `${err.message} [${causes}]`;
+  }
+  if (err.cause !== undefined) {
+    return `${err.message} (cause: ${describeError(err.cause, depth + 1)})`;
+  }
+  return err.message;
+}
+
 function pushDebugRecord<T>(buffer: T[], record: T): void {
   buffer.push(record);
   if (buffer.length > debugSnapshotMaxRecords) {
@@ -1412,7 +1433,7 @@ export class Agento11yClient {
       this.logger.warn?.(message);
       return;
     }
-    this.logger.warn?.(`${message}: ${asError(error).message}`);
+    this.logger.warn?.(`${message}: ${describeError(error)}`);
   }
 }
 
